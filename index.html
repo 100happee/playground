@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>3D Platformer Playground</title>
+  <title>3D Platformer Playground v2</title>
   <style>
     body { margin: 0; overflow: hidden; background: #202020; }
     canvas { display: block; }
@@ -13,7 +13,7 @@
   <script src="https://cdn.jsdelivr.net/npm/three@0.157.0/build/three.min.js"></script>
 
   <script>
-    // --- Basic Setup ---
+    // === Basic Scene Setup ===
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x202020);
 
@@ -22,79 +22,107 @@
     renderer.setSize(innerWidth, innerHeight);
     document.body.appendChild(renderer.domElement);
 
-    // Lighting
     const light = new THREE.DirectionalLight(0xffffff, 1);
     light.position.set(5, 10, 5);
     scene.add(light);
-    scene.add(new THREE.AmbientLight(0x404040));
+    scene.add(new THREE.AmbientLight(0x606060));
 
-    // --- Ground Grid ---
-    const grid = new THREE.GridHelper(100, 50);
-    scene.add(grid);
+    // === Floor ===
+    const floorMat = new THREE.MeshStandardMaterial({ color: 0x444444 });
+    const floorGeo = new THREE.BoxGeometry(40, 0.5, 40);
+    const floor = new THREE.Mesh(floorGeo, floorMat);
+    floor.position.y = -0.25;
+    scene.add(floor);
 
-    // --- Player Cube ---
-    const playerGeometry = new THREE.BoxGeometry(1, 1, 1);
-    const playerMaterial = new THREE.MeshStandardMaterial({ color: 0x00ff88 });
-    const player = new THREE.Mesh(playerGeometry, playerMaterial);
-    player.position.set(0, 0.5, 0);
+    // === Player ===
+    const playerGeo = new THREE.BoxGeometry(1, 1, 1);
+    const playerMat = new THREE.MeshStandardMaterial({ color: 0x00ffaa });
+    const player = new THREE.Mesh(playerGeo, playerMat);
+    player.position.set(0, 1, 0);
     scene.add(player);
 
-    // --- Platforms ---
-    const platformMaterial = new THREE.MeshStandardMaterial({ color: 0x8888ff });
+    // === Platforms ===
+    const platformMat = new THREE.MeshStandardMaterial({ color: 0x8888ff });
     const platforms = [];
 
     function addPlatform(x, y, z, width, depth) {
-      const geometry = new THREE.BoxGeometry(width, 0.5, depth);
-      const mesh = new THREE.Mesh(geometry, platformMaterial);
+      const geo = new THREE.BoxGeometry(width, 0.5, depth);
+      const mesh = new THREE.Mesh(geo, platformMat);
       mesh.position.set(x, y, z);
       scene.add(mesh);
       platforms.push(mesh);
     }
 
+    // Jumpable path of platforms
     addPlatform(0, 0, 0, 20, 20);
-    addPlatform(4, 2, -5, 3, 3);
-    addPlatform(-4, 4, -5, 3, 3);
-    addPlatform(8, 6, -8, 3, 3);
-    addPlatform(0, 8, -12, 3, 3);
+    addPlatform(3, 2, -4, 3, 3);
+    addPlatform(6, 4, -8, 3, 3);
+    addPlatform(3, 6, -12, 3, 3);
+    addPlatform(0, 8, -16, 3, 3);
+    addPlatform(-3, 10, -20, 3, 3);
+    addPlatform(-6, 12, -24, 3, 3);
+    addPlatform(-3, 14, -28, 3, 3);
+    addPlatform(0, 16, -32, 3, 3);
 
-    // --- Controls ---
-    let velocity = new THREE.Vector3();
-    let direction = new THREE.Vector3();
+    // === Coins ===
+    const coinGeo = new THREE.TorusGeometry(0.3, 0.1, 8, 16);
+    const coinMat = new THREE.MeshStandardMaterial({ color: 0xffdd00, emissive: 0x553300 });
+    const coins = [];
+
+    function addCoin(x, y, z) {
+      const coin = new THREE.Mesh(coinGeo, coinMat.clone());
+      coin.position.set(x, y, z);
+      scene.add(coin);
+      coins.push(coin);
+    }
+
+    // Place coins above each platform
+    platforms.slice(1).forEach(p => addCoin(p.position.x, p.position.y + 1.2, p.position.z));
+
+    // === Controls ===
     const keys = {};
+    let velocity = new THREE.Vector3();
     let canJump = false;
     let mouseDown = false;
-    let pitch = 0;
-    let yaw = 0;
+    let yaw = 0, pitch = 0;
 
-    window.addEventListener("keydown", (e) => keys[e.code] = true);
-    window.addEventListener("keyup", (e) => keys[e.code] = false);
-    window.addEventListener("mousedown", () => { mouseDown = true; });
-    window.addEventListener("mouseup", () => { mouseDown = false; });
-    window.addEventListener("mousemove", (e) => {
+    window.addEventListener("keydown", e => keys[e.code] = true);
+    window.addEventListener("keyup", e => keys[e.code] = false);
+    window.addEventListener("mousedown", () => mouseDown = true);
+    window.addEventListener("mouseup", () => mouseDown = false);
+    window.addEventListener("mousemove", e => {
       if (!mouseDown) return;
       yaw -= e.movementX * 0.002;
       pitch -= e.movementY * 0.002;
-      pitch = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, pitch)); // clamp look up/down
+      pitch = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, pitch));
     });
 
-    // --- Physics Loop ---
+    // === Collision Detection Helper ===
+    function boxIntersect(a, b) {
+      const aBox = new THREE.Box3().setFromObject(a);
+      const bBox = new THREE.Box3().setFromObject(b);
+      return aBox.intersectsBox(bBox);
+    }
+
+    // === Physics ===
     const gravity = -0.01;
 
     function animate() {
       requestAnimationFrame(animate);
 
-      // WASD movement direction relative to camera
-      direction.set(0, 0, 0);
+      // Movement direction
       const forward = new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw));
       const right = new THREE.Vector3(forward.z, 0, -forward.x);
+      const direction = new THREE.Vector3();
 
       if (keys["KeyW"]) direction.add(forward);
       if (keys["KeyS"]) direction.sub(forward);
-      if (keys["KeyA"]) direction.sub(right);
-      if (keys["KeyD"]) direction.add(right);
+      if (keys["KeyA"]) direction.add(right);   // switched correctly
+      if (keys["KeyD"]) direction.sub(right);
+
       direction.normalize();
 
-      // Horizontal movement
+      // Horizontal velocity
       velocity.x = direction.x * 0.15;
       velocity.z = direction.z * 0.15;
 
@@ -107,45 +135,69 @@
       // Gravity
       velocity.y += gravity;
 
-      // Move player
+      // Apply velocity
       player.position.add(velocity);
 
-      // Ground/platform collision detection
+      // Collisions
       canJump = false;
       let grounded = false;
-      for (const plat of platforms) {
-        const px = player.position.x;
-        const py = player.position.y;
-        const pz = player.position.z;
 
-        const minX = plat.position.x - plat.geometry.parameters.width / 2;
-        const maxX = plat.position.x + plat.geometry.parameters.width / 2;
-        const minZ = plat.position.z - plat.geometry.parameters.depth / 2;
-        const maxZ = plat.position.z + plat.geometry.parameters.depth / 2;
-        const topY = plat.position.y + 0.25;
+      for (const plat of [floor, ...platforms]) {
+        const playerBox = new THREE.Box3().setFromObject(player);
+        const platBox = new THREE.Box3().setFromObject(plat);
 
-        if (px > minX && px < maxX && pz > minZ && pz < maxZ && py <= topY + 0.5 && py >= topY - 0.2) {
-          player.position.y = topY + 0.5;
-          velocity.y = 0;
-          grounded = true;
-          canJump = true;
+        if (playerBox.intersectsBox(platBox)) {
+          const penetration = new THREE.Vector3();
+          penetration.x = Math.min(platBox.max.x - playerBox.min.x, playerBox.max.x - platBox.min.x);
+          penetration.y = Math.min(platBox.max.y - playerBox.min.y, playerBox.max.y - platBox.min.y);
+          penetration.z = Math.min(platBox.max.z - playerBox.min.z, playerBox.max.z - platBox.min.z);
+
+          // resolve smallest penetration axis
+          const minPen = Math.min(penetration.x, penetration.y, penetration.z);
+          if (minPen === penetration.y) {
+            if (player.position.y > plat.position.y) {
+              player.position.y = platBox.max.y + 0.5; // top collision
+              velocity.y = 0;
+              grounded = true;
+              canJump = true;
+            } else {
+              player.position.y = platBox.min.y - 0.5; // bottom hit
+              velocity.y = Math.min(velocity.y, 0);
+            }
+          } else if (minPen === penetration.x) {
+            if (player.position.x < plat.position.x) player.position.x = platBox.min.x - 0.5;
+            else player.position.x = platBox.max.x + 0.5;
+            velocity.x = 0;
+          } else {
+            if (player.position.z < plat.position.z) player.position.z = platBox.min.z - 0.5;
+            else player.position.z = platBox.max.z + 0.5;
+            velocity.z = 0;
+          }
         }
       }
 
-      // If below world, reset
+      // Respawn if fallen
       if (player.position.y < -10) {
-        player.position.set(0, 5, 0);
+        player.position.set(0, 3, 0);
         velocity.set(0, 0, 0);
       }
 
-      // Camera follow + look direction
-      const cameraOffset = new THREE.Vector3(0, 2, 5);
+      // Coin collection
+      for (let i = coins.length - 1; i >= 0; i--) {
+        const coin = coins[i];
+        coin.rotation.y += 0.05;
+        if (boxIntersect(player, coin)) {
+          scene.remove(coin);
+          coins.splice(i, 1);
+        }
+      }
+
+      // Camera follow
       const camDir = new THREE.Vector3(
         Math.sin(yaw) * Math.cos(pitch),
         Math.sin(pitch),
         Math.cos(yaw) * Math.cos(pitch)
       );
-
       camera.position.copy(player.position).addScaledVector(camDir, -5).add(new THREE.Vector3(0, 2, 0));
       camera.lookAt(player.position);
 
@@ -154,7 +206,7 @@
 
     animate();
 
-    // Resize
+    // === Resize ===
     window.addEventListener("resize", () => {
       camera.aspect = innerWidth / innerHeight;
       camera.updateProjectionMatrix();
