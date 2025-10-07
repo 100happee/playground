@@ -1,618 +1,200 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Mini 3D Platformer — Cube Playground</title>
-<style>
-  html,body{height:100%;margin:0;background:#0b1220;color:#cfe8ff;font-family:Inter,segui,system-ui,Arial;}
-  #container{width:100%;height:100%;display:block;position:relative;overflow:hidden;}
-  canvas{display:block}
-  .hud{
-    position: absolute; left: 12px; top: 12px;
-    background: rgba(6,12,20,0.55); padding:10px 12px; border-radius:10px;
-    border: 1px solid rgba(255,255,255,0.04); font-size:13px;
-    backdrop-filter: blur(6px);
-  }
-  .hud b{color:#fff}
-  .controls{position:absolute; right:12px; top:12px; padding:10px; border-radius:10px; background: rgba(2,6,12,0.5); border:1px solid rgba(255,255,255,0.03)}
-  .controls small{display:block; color:#9ecfff}
-  #fps{font-family:monospace; margin-top:6px; color:#bfe8ff}
-  .msg{position:absolute; left:50%; transform:translateX(-50%); bottom:22px; background: rgba(0,0,0,0.5); padding:8px 14px; border-radius:8px; font-weight:600; color:#fff}
-  a.link{color:#9edbff}
-  #overlayHint{position:absolute; left:50%; transform:translateX(-50%); top:14px; padding:6px 10px; border-radius:8px; background:rgba(255,255,255,0.02); color:#cdeeff}
-</style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1.0" />
+  <title>3D Platformer Playground</title>
+  <style>
+    body { margin: 0; overflow: hidden; background: #101418; color: white; font-family: sans-serif; }
+    #info { position: absolute; top: 10px; left: 10px; z-index: 1; background: rgba(0,0,0,0.4); padding: 8px 12px; border-radius: 8px; }
+    canvas { display: block; }
+  </style>
 </head>
 <body>
-<div id="container"></div>
-
-<div class="hud" id="hud">
-  <div><b>Cube Playground</b></div>
-  <div style="margin-top:8px">Controls: <span style="opacity:0.95">WASD</span> to move, <span style="opacity:0.95">Space</span> to jump</div>
-  <div style="margin-top:6px">Camera: Click & drag to orbit, scroll to zoom</div>
-  <div id="score" style="margin-top:8px">Collectibles: <b id="colCount">0</b></div>
-  <div id="vel" style="margin-top:6px;font-family:monospace">Vel: <span id="velVal">0,0,0</span></div>
-  <div id="pos" style="margin-top:4px;font-family:monospace">Pos: <span id="posVal">0,0,0</span></div>
+<div id="info">
+  <b>3D Platformer Test</b><br>
+  Move: WASD — Jump: Space — Drag: Rotate camera
 </div>
 
-<div class="controls">
-  <div style="display:flex;gap:8px;margin-bottom:6px">
-    <button id="resetBtn">Reset (R)</button>
-    <button id="toggleDebug">Toggle Debug</button>
-  </div>
-  <small>Click a moving platform to toggle motion</small>
-  <div id="fps">FPS: --</div>
-</div>
-
-<div id="overlayHint">Tip: Try jumping between platforms — there's a pulsing collectible cube!</div>
-<div class="msg" id="message" style="display:none"></div>
-
-<!-- Three.js from CDN -->
-<script src="https://unpkg.com/three@0.155.0/build/three.min.js"></script>
+<!-- THREE.js -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.min.js"></script>
 
 <script>
-/*
-Mini 3D platformer engine
-- Rendering: three.js
-- Physics: custom AABB sweep for player cube
-- Player is an axis-aligned cube (keeps physics simple)
-*/
-
-const container = document.getElementById('container');
-const messageEl = document.getElementById('message');
-const posVal = document.getElementById('posVal');
-const velVal = document.getElementById('velVal');
-const colCountEl = document.getElementById('colCount');
-const fpsEl = document.getElementById('fps');
-
 let scene, camera, renderer;
-let player, playerBox;
-let worldBoxes = []; // array of {mesh, box, isMoving, motionParams}
-let collectibles = [];
-let debugHelpers = [];
-let debugMode = false;
+let player, controls = {}, velocity = new THREE.Vector3();
+let objects = [], keys = {};
+let canJump = false;
 
-const clock = new THREE.Clock();
-let lastTime = performance.now();
-let fpsAccumulator = {frames:0, time:0};
+// Scene setup
+scene = new THREE.Scene();
+scene.background = new THREE.Color(0x11161f);
 
-init();
-animate();
+// Camera setup
+camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+camera.position.set(0, 3, 8);
 
-function init(){
-  // Scene & renderer
-  scene = new THREE.Scene();
-  scene.fog = new THREE.FogExp2(0x081021, 0.018);
+// Renderer setup
+renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+document.body.appendChild(renderer.domElement);
 
-  renderer = new THREE.WebGLRenderer({antialias:true});
-  renderer.setPixelRatio(window.devicePixelRatio);
-  renderer.setSize(window.innerWidth, window.innerHeight);
-  renderer.shadowMap.enabled = true;
-  container.appendChild(renderer.domElement);
+// Lights
+const ambient = new THREE.AmbientLight(0xffffff, 0.6);
+scene.add(ambient);
+const dirLight = new THREE.DirectionalLight(0xffffff, 1);
+dirLight.position.set(5, 10, 7);
+scene.add(dirLight);
 
-  // Camera
-  camera = new THREE.PerspectiveCamera(60, window.innerWidth/window.innerHeight, 0.1, 2000);
-  camera.position.set(0, 6, 10);
+// Ground (grid)
+const groundSize = 200;
+const groundGeo = new THREE.PlaneGeometry(groundSize, groundSize);
+const groundMat = new THREE.MeshStandardMaterial({ color: 0x222831 });
+const ground = new THREE.Mesh(groundGeo, groundMat);
+ground.rotation.x = -Math.PI / 2;
+scene.add(ground);
 
-  // Lighting
-  const hemi = new THREE.HemisphereLight(0xbfe8ff, 0x20283a, 0.6);
-  scene.add(hemi);
-  const dir = new THREE.DirectionalLight(0xffffff, 0.9);
-  dir.position.set(10, 20, 8);
-  dir.castShadow = true;
-  dir.shadow.camera.left = -30; dir.shadow.camera.right = 30; dir.shadow.camera.top = 30; dir.shadow.camera.bottom = -30;
-  dir.shadow.mapSize.set(2048,2048);
-  scene.add(dir);
+// Add grid helper
+const grid = new THREE.GridHelper(groundSize, groundSize / 2, 0x555555, 0x333333);
+scene.add(grid);
 
-  // Ground grid
-  const grid = new THREE.GridHelper(200, 200, 0x2f7fae, 0x16303d);
-  grid.material.opacity = 0.9;
-  grid.material.depthWrite = false;
-  scene.add(grid);
+// Player cube
+const playerGeo = new THREE.BoxGeometry(1, 1, 1);
+const playerMat = new THREE.MeshStandardMaterial({ color: 0x00aaff });
+player = new THREE.Mesh(playerGeo, playerMat);
+player.position.y = 2;
+scene.add(player);
 
-  // Ground plane (for shadow/contact)
-  const groundGeo = new THREE.PlaneGeometry(200,200);
-  const groundMat = new THREE.MeshStandardMaterial({color:0x072033, roughness:1});
-  const ground = new THREE.Mesh(groundGeo, groundMat);
-  ground.rotation.x = -Math.PI/2;
-  ground.receiveShadow = true;
-  ground.position.y = -0.5;
-  scene.add(ground);
-
-  // Player cube (physics: axis-aligned cube)
-  const playerSize = 1.0;
-  const playerGeo = new THREE.BoxGeometry(playerSize, playerSize, playerSize);
-  const playerMat = new THREE.MeshStandardMaterial({color:0xffb86b});
-  player = new THREE.Mesh(playerGeo, playerMat);
-  player.castShadow = true;
-  player.receiveShadow = false;
-  player.position.set(0, 1.0, 0);
-  scene.add(player);
-  player.userData.size = playerSize;
-  player.userData.velocity = new THREE.Vector3(0,0,0);
-  player.userData.onGround = false;
-
-  // Helper Box3 for player
-  playerBox = new THREE.Box3();
-
-  // Create level: platforms and boxes
-  makePlatform(0, -0.5, 0, 50, 1, 50, 0x204a5a, false); // huge ground base (thin box)
-  // Some static platforms
-  makePlatform(0, 0.5, -6, 6, 1, 6, 0x2f9aa4, false);
-  makePlatform(4, 2.0, -2, 3, 1, 3, 0x9c7ff0, false);
-  makePlatform(-5.5, 3.0, 1.5, 2, 1, 4, 0xe76f51, false);
-  makePlatform(1.5, 4.6, 5.5, 3, 1, 3, 0x7bd389, false);
-
-  // A moving platform (oscillating)
-  makePlatform(-8, 1.5, -8, 3, 1, 3, 0xff7ad6, true, {axis:'x', range:8, speed:1.2});
-
-  // A rotating-ish platform simulated by oscillating Y and Z
-  makePlatform(8, 2.0, 4, 4, 0.8, 4, 0x7aa2ff, true, {axis:'z', range:6, speed:0.9, yOsc:0.7});
-
-  // Tall column to test wall collisions
-  makePlatform(0, 1.5, 12, 2, 6, 2, 0x6fd3c9, false);
-
-  // Collectible cube (pulses)
-  makeCollectible(1.5, 5.6, 5.5, 0.5);
-
-  // Extra obstacles
-  makePlatform(3.5, 0.6, -12, 2, 1, 2, 0xd4a373, false);
-  makePlatform(-3.5, 0.6, -14, 2, 1, 2, 0xd4a373, false);
-
-  // Add a little skybox-like backdrop planes (thin)
-  makeBackdrop();
-
-  // Event listeners
-  window.addEventListener('resize', onWindowResize);
-  initInput();
+// Platforms / obstacles
+function addPlatform(x, y, z, w=2, h=0.5, d=2, color=0xff8844){
+  const geo = new THREE.BoxGeometry(w, h, d);
+  const mat = new THREE.MeshStandardMaterial({ color });
+  const platform = new THREE.Mesh(geo, mat);
+  platform.position.set(x, y, z);
+  scene.add(platform);
+  objects.push(platform);
 }
 
-// Create a platform
-function makePlatform(x,y,z, sx, sy, sz, color=0x999999, isMoving=false, motionParams=null){
-  const geo = new THREE.BoxGeometry(sx, sy, sz);
-  const mat = new THREE.MeshStandardMaterial({color: color, metalness:0.2, roughness:0.8});
-  const mesh = new THREE.Mesh(geo, mat);
-  mesh.castShadow = true;
-  mesh.receiveShadow = true;
-  mesh.position.set(x,y,z);
-  scene.add(mesh);
+// Create some platforms
+addPlatform(0, 0.25, 0, 30, 0.5, 30, 0x334455); // big ground base
+addPlatform(0, 1, -5);
+addPlatform(3, 2, -8);
+addPlatform(-3, 3, -12);
+addPlatform(0, 4, -15);
+addPlatform(5, 1, 5);
+addPlatform(-5, 1.5, 5);
+addPlatform(8, 2, 0);
+addPlatform(-8, 2, 0);
 
-  const box = new THREE.Box3().setFromObject(mesh);
-  const wp = {mesh, box, isMoving: !!isMoving, motionParams: motionParams || null, basePos: mesh.position.clone()};
-  worldBoxes.push(wp);
+// Physics constants
+const gravity = -0.04;
+const moveSpeed = 0.15;
+const jumpForce = 0.9;
 
-  // If moving: add a small visual marker
-  if (isMoving){
-    const mark = new THREE.BoxHelper(mesh, 0xffffff);
-    mark.visible = false; // used only in debug
-    scene.add(mark);
-    debugHelpers.push(mark);
+// Input handling
+document.addEventListener('keydown', e => keys[e.code] = true);
+document.addEventListener('keyup', e => keys[e.code] = false);
+
+// Camera rotation (mouse drag)
+let isDragging = false, prevMouse = {x:0, y:0};
+let yaw = 0, pitch = 0;
+
+document.addEventListener('mousedown', e => {
+  isDragging = true;
+  prevMouse.x = e.clientX;
+  prevMouse.y = e.clientY;
+});
+document.addEventListener('mouseup', () => isDragging = false);
+document.addEventListener('mousemove', e => {
+  if (!isDragging) return;
+  const dx = e.clientX - prevMouse.x;
+  const dy = e.clientY - prevMouse.y;
+  prevMouse.x = e.clientX;
+  prevMouse.y = e.clientY;
+  yaw -= dx * 0.003;
+  pitch -= dy * 0.003;
+  pitch = Math.max(-Math.PI/3, Math.min(Math.PI/3, pitch));
+});
+
+// Collision with platforms
+function checkCollisions() {
+  canJump = false;
+  const playerBox = new THREE.Box3().setFromObject(player);
+
+  for (let obj of objects) {
+    const box = new THREE.Box3().setFromObject(obj);
+    if (playerBox.intersectsBox(box)) {
+      // simple Y collision handling
+      if (player.position.y > obj.position.y) {
+        player.position.y = obj.position.y + 0.75;
+        velocity.y = 0;
+        canJump = true;
+      }
+    }
+  }
+
+  // ground collision
+  if (player.position.y <= 0.5) {
+    player.position.y = 0.5;
+    velocity.y = 0;
+    canJump = true;
   }
 }
 
-// Collectible cube
-function makeCollectible(x,y,z, size=0.6){
-  const geo = new THREE.BoxGeometry(size,size,size);
-  const mat = new THREE.MeshStandardMaterial({color:0xffe066, emissive:0xffa600, emissiveIntensity:0.2});
-  const mesh = new THREE.Mesh(geo, mat);
-  mesh.position.set(x,y,z);
-  mesh.userData.collected = false;
-  scene.add(mesh);
-  collectibles.push(mesh);
+// Game loop
+function animate() {
+  requestAnimationFrame(animate);
+
+  // Apply gravity
+  velocity.y += gravity;
+
+  // Move player
+  let dir = new THREE.Vector3();
+  if (keys['KeyW']) dir.z -= 1;
+  if (keys['KeyS']) dir.z += 1;
+  if (keys['KeyA']) dir.x -= 1;
+  if (keys['KeyD']) dir.x += 1;
+  dir.normalize();
+
+  // apply direction based on camera rotation
+  const forward = new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw));
+  const right = new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw));
+  const move = new THREE.Vector3();
+  move.addScaledVector(forward, dir.z);
+  move.addScaledVector(right, dir.x);
+  move.normalize().multiplyScalar(moveSpeed);
+
+  player.position.add(move);
+  player.position.y += velocity.y;
+
+  // Jump
+  if (keys['Space'] && canJump) {
+    velocity.y = jumpForce;
+    canJump = false;
+  }
+
+  // Collisions
+  checkCollisions();
+
+  // Update camera position behind player
+  const camDist = 6;
+  const camHeight = 3;
+  const camX = player.position.x + Math.sin(yaw) * camDist;
+  const camZ = player.position.z + Math.cos(yaw) * camDist;
+  const camY = player.position.y + camHeight;
+  camera.position.lerp(new THREE.Vector3(camX, camY, camZ), 0.15);
+  camera.lookAt(player.position.x, player.position.y + 0.5 + pitch * 2, player.position.z);
+
+  renderer.render(scene, camera);
 }
 
-// small backdrop planes for view
-function makeBackdrop(){
-  const g = new THREE.PlaneGeometry(80, 30);
-  const m = new THREE.MeshBasicMaterial({color:0x07172a, side:THREE.BackSide});
-  const p1 = new THREE.Mesh(g, m);
-  p1.position.set(0, 15, -60);
-  scene.add(p1);
-  const p2 = p1.clone(); p2.rotation.y = Math.PI; p2.position.set(0, 15, 60); scene.add(p2);
-}
+animate();
 
-// Helper: show temporary message
-function showMessage(text, time=1800){
-  messageEl.style.display = 'block';
-  messageEl.textContent = text;
-  if (messageEl._hideTimer) clearTimeout(messageEl._hideTimer);
-  messageEl._hideTimer = setTimeout(()=> messageEl.style.display='none', time);
-}
-
-// Resize
-function onWindowResize(){
+// Handle window resize
+window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth/window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
-}
-
-/* ============================
-   Input & Camera orbiting
-   ============================ */
-const keys = { w:false, a:false, s:false, d:false, space:false };
-let isPointerDown = false, lastPointer = {x:0,y:0};
-let yaw = Math.PI * 0.2, pitch = 0.25;
-let targetDistance = 10;
-
-function initInput(){
-  // Keyboard
-  window.addEventListener('keydown', (e)=>{
-    if (e.code === 'KeyW') keys.w = true;
-    if (e.code === 'KeyA') keys.a = true;
-    if (e.code === 'KeyS') keys.s = true;
-    if (e.code === 'KeyD') keys.d = true;
-    if (e.code === 'Space') {
-      if (!keys.space) tryJump();
-      keys.space = true;
-    }
-    if (e.code === 'KeyR') resetPlayer();
-    if (e.code === 'KeyG') { debugMode = !debugMode; toggleDebug(debugMode); }
-  });
-  window.addEventListener('keyup', (e)=>{
-    if (e.code === 'KeyW') keys.w = false;
-    if (e.code === 'KeyA') keys.a = false;
-    if (e.code === 'KeyS') keys.s = false;
-    if (e.code === 'KeyD') keys.d = false;
-    if (e.code === 'Space') keys.space = false;
-  });
-
-  // Mouse orbit (click & drag)
-  renderer.domElement.addEventListener('pointerdown', (e)=>{
-    isPointerDown = true;
-    lastPointer.x = e.clientX;
-    lastPointer.y = e.clientY;
-    renderer.domElement.setPointerCapture && renderer.domElement.setPointerCapture(e.pointerId);
-
-    // Try clicking objects (e.g., moving platforms)
-    const mouse = new THREE.Vector2((e.clientX / window.innerWidth) * 2 - 1, -(e.clientY / window.innerHeight) * 2 + 1);
-    const raycaster = new THREE.Raycaster();
-    raycaster.setFromCamera(mouse, camera);
-    const hits = raycaster.intersectObjects(worldBoxes.map(w=>w.mesh), false);
-    if (hits.length){
-      // toggle first hit moving platform motion
-      const hitMesh = hits[0].object;
-      const wp = worldBoxes.find(w => w.mesh === hitMesh);
-      if (wp && wp.isMoving){
-        wp.motionParams._active = !wp.motionParams._active;
-        showMessage(wp.motionParams._active ? 'Platform motion ON' : 'Platform motion OFF', 1200);
-      }
-    }
-  });
-  renderer.domElement.addEventListener('pointermove', (e)=>{
-    if (!isPointerDown) return;
-    const dx = (e.clientX - lastPointer.x) * 0.005;
-    const dy = (e.clientY - lastPointer.y) * 0.005;
-    lastPointer.x = e.clientX; lastPointer.y = e.clientY;
-    yaw -= dx;
-    pitch -= dy;
-    pitch = Math.max(-Math.PI/2 + 0.05, Math.min(Math.PI/2 - 0.05, pitch));
-  });
-  renderer.domElement.addEventListener('pointerup', (e)=>{
-    isPointerDown = false;
-    renderer.domElement.releasePointerCapture && renderer.domElement.releasePointerCapture(e.pointerId);
-  });
-  // Scroll to zoom
-  renderer.domElement.addEventListener('wheel', (e)=>{
-    e.preventDefault();
-    targetDistance += e.deltaY * 0.01;
-    targetDistance = Math.max(4, Math.min(26, targetDistance));
-  }, {passive:false});
-
-  // UI Buttons
-  document.getElementById('resetBtn').addEventListener('click', resetPlayer);
-  document.getElementById('toggleDebug').addEventListener('click', ()=>{ debugMode = !debugMode; toggleDebug(debugMode); });
-
-  // small keyboard mapping for debug key
-  window.addEventListener('keydown', (e)=>{ if (e.code==='KeyP') toggleDebug(!debugMode); });
-}
-
-/* ============================
-   Movement & Physics
-   ============================ */
-
-const GRAV = -28; // units/s^2
-const MOVE_SPEED = 6; // ground speed
-const AIR_MOVE_MULT = 0.6;
-const JUMP_V = 10;
-const FRICTION = 10;
-
-function tryJump(){
-  if (player.userData.onGround){
-    player.userData.velocity.y = JUMP_V;
-    player.userData.onGround = false;
-  }
-}
-
-function resetPlayer(){
-  player.position.set(0, 1.0, 0);
-  player.userData.velocity.set(0,0,0);
-  player.userData.onGround = false;
-  showMessage('Player reset', 900);
-}
-
-// Axis-aligned box collision resolution by sweep per-axis
-function resolveCollisions(pos, vel, halfSize, dt){
-  // pos and vel are THREE.Vector3; halfSize is Vector3 half extents
-  // We'll move X, then Y, then Z and resolve overlaps per-axis.
-  const newPos = pos.clone();
-  const axes = ['x','y','z'];
-  for (let i=0;i<3;i++){
-    const a = axes[i];
-    newPos[a] += vel[a] * dt;
-    // compute player AABB
-    const pbmin = new THREE.Vector3(newPos.x - halfSize.x, newPos.y - halfSize.y, newPos.z - halfSize.z);
-    const pbmax = new THREE.Vector3(newPos.x + halfSize.x, newPos.y + halfSize.y, newPos.z + halfSize.z);
-    // check against all world boxes
-    for (const wp of worldBoxes){
-      const b = wp.box;
-      if (pbmax.x <= b.min.x || pbmin.x >= b.max.x ||
-          pbmax.y <= b.min.y || pbmin.y >= b.max.y ||
-          pbmax.z <= b.min.z || pbmin.z >= b.max.z) {
-        continue; // no overlap
-      }
-      // overlap exists -> compute minimal translation along axis a
-      if (a === 'x'){
-        // push left or right
-        const overlapLeft = pbmax.x - b.min.x; // positive if we penetrate on +x side
-        const overlapRight = b.max.x - pbmin.x; // positive if we penetrate on -x side
-        if (overlapLeft > 0 && overlapLeft < overlapRight){
-          newPos.x -= overlapLeft;
-        } else {
-          newPos.x += overlapRight;
-        }
-        vel.x = 0;
-      } else if (a === 'y'){
-        const overlapAbove = pbmax.y - b.min.y;
-        const overlapBelow = b.max.y - pbmin.y;
-        if (overlapAbove > 0 && overlapAbove < overlapBelow){
-          newPos.y -= overlapAbove;
-          // if we collided from above, that means we landed on top of something
-          if (vel.y <= 0) player.userData.onGround = true;
-        } else {
-          newPos.y += overlapBelow;
-        }
-        vel.y = 0;
-      } else if (a === 'z'){
-        const overlapFront = pbmax.z - b.min.z;
-        const overlapBack = b.max.z - pbmin.z;
-        if (overlapFront > 0 && overlapFront < overlapBack){
-          newPos.z -= overlapFront;
-        } else {
-          newPos.z += overlapBack;
-        }
-        vel.z = 0;
-      }
-      // update pbmin/pbmax to reflect corrected position for subsequent boxes
-      pbmin.set(newPos.x - halfSize.x, newPos.y - halfSize.y, newPos.z - halfSize.z);
-      pbmax.set(newPos.x + halfSize.x, newPos.y + halfSize.y, newPos.z + halfSize.z);
-    }
-  }
-  return {pos:newPos, vel:vel};
-}
-
-/* ============================
-   Animation loop
-   ============================ */
-
-function animate(){
-  requestAnimationFrame(animate);
-  const dt = Math.min(0.05, clock.getDelta()); // clamp dt
-  updatePhysics(dt);
-  updateMovingPlatforms(dt);
-  updateCamera(dt);
-  renderer.render(scene, camera);
-
-  // HUD update
-  posVal.textContent = `${player.position.x.toFixed(2)}, ${player.position.y.toFixed(2)}, ${player.position.z.toFixed(2)}`;
-  velVal.textContent = `${player.userData.velocity.x.toFixed(2)}, ${player.userData.velocity.y.toFixed(2)}, ${player.userData.velocity.z.toFixed(2)}`;
-
-  // FPS measure
-  const now = performance.now();
-  fpsAccumulator.frames++;
-  fpsAccumulator.time += (now - lastTime);
-  lastTime = now;
-  if (fpsAccumulator.time > 500){
-    const fps = Math.round((fpsAccumulator.frames / fpsAccumulator.time) * 1000);
-    fpsEl.textContent = `FPS: ${fps}`;
-    fpsAccumulator.frames = 0; fpsAccumulator.time = 0;
-  }
-}
-
-function updatePhysics(dt){
-  // Basic gravity
-  const vel = player.userData.velocity;
-  vel.y += GRAV * dt;
-
-  // Movement input relative to camera orientation (flattened)
-  const camDir = new THREE.Vector3();
-  camera.getWorldDirection(camDir);
-  camDir.y = 0; camDir.normalize();
-  const camRight = new THREE.Vector3().crossVectors(camDir, new THREE.Vector3(0,1,0)).normalize();
-
-  let moveDir = new THREE.Vector3();
-  if (keys.w) moveDir.add(camDir);
-  if (keys.s) moveDir.sub(camDir);
-  if (keys.a) moveDir.sub(camRight);
-  if (keys.d) moveDir.add(camRight);
-  if (moveDir.lengthSq() > 0) moveDir.normalize();
-
-  const onGround = player.userData.onGround;
-  const targetSpeed = MOVE_SPEED * (onGround ? 1.0 : AIR_MOVE_MULT);
-
-  // accelerate toward target velocity on horizontal plane
-  const targetVel = moveDir.multiplyScalar(targetSpeed);
-  const accel = onGround ? 40 : 10; // quicker on ground
-  vel.x += (targetVel.x - vel.x) * Math.min(1, accel * dt);
-  vel.z += (targetVel.z - vel.z) * Math.min(1, accel * dt);
-
-  // friction if no input
-  if (moveDir.lengthSq() === 0 && onGround){
-    // simple ground friction
-    vel.x -= vel.x * Math.min(1, FRICTION * dt);
-    vel.z -= vel.z * Math.min(1, FRICTION * dt);
-  }
-
-  // Prepare AABB sweep
-  const half = new THREE.Vector3(player.userData.size/2, player.userData.size/2, player.userData.size/2);
-  // reset onGround before resolving (will set true if collision from above)
-  player.userData.onGround = false;
-
-  // compute each world box's current Box3 (for moving platforms)
-  for (const wp of worldBoxes){
-    wp.box.setFromObject(wp.mesh);
-  }
-
-  // Sweep and resolve collisions
-  const res = resolveCollisions(player.position.clone(), vel.clone(), half, dt);
-  player.position.copy(res.pos);
-  player.userData.velocity.copy(res.vel);
-
-  // Keep afloat above extremely low value
-  if (player.position.y < -50){
-    showMessage('Fell out — resetting', 1200);
-    resetPlayer();
-  }
-
-  // update player's three.js mesh transform
-  player.position.y = Math.max(player.position.y, -49); // safety
-  player.updateMatrixWorld();
-
-  // Update collectibles: simple AABB intersection
-  playerBox.setFromCenterAndSize(player.position.clone(), new THREE.Vector3(player.userData.size, player.userData.size, player.userData.size));
-  let collectedThisFrame = 0;
-  for (const c of collectibles.slice()){
-    if (c.userData.collected) continue;
-    const cb = new THREE.Box3().setFromObject(c);
-    if (playerBox.intersectsBox(cb)){
-      c.userData.collected = true;
-      scene.remove(c);
-      const idx = collectibles.indexOf(c);
-      if (idx >= 0) collectibles.splice(idx,1);
-      collectedThisFrame++;
-      showMessage('Collected!', 900);
-    } else {
-      // pulse animation
-      const t = performance.now() * 0.002;
-      c.scale.setScalar(1 + Math.sin(t) * 0.12);
-      c.rotation.y += 0.02;
-    }
-  }
-  if (collectedThisFrame > 0){
-    colCountEl.textContent = parseInt(colCountEl.textContent) + collectedThisFrame;
-  }
-}
-
-/* ============================
-   Moving platforms update
-   ============================ */
-function updateMovingPlatforms(dt){
-  for (const wp of worldBoxes){
-    if (!wp.isMoving) continue;
-    const p = wp.mesh;
-    const mp = wp.motionParams || {};
-    // default active state
-    if (mp._active === undefined) mp._active = true;
-    if (!mp._active) continue;
-
-    const speed = mp.speed || 1;
-    const t = performance.now() * 0.001 * speed;
-    const axis = mp.axis || 'x';
-
-    if (axis === 'x'){
-      p.position.x = wp.basePos.x + Math.sin(t) * (mp.range || 4);
-    } else if (axis === 'z'){
-      p.position.z = wp.basePos.z + Math.sin(t) * (mp.range || 4);
-    } else if (axis === 'y'){
-      p.position.y = wp.basePos.y + Math.sin(t) * (mp.range || 2);
-    }
-    if (mp.yOsc){
-      p.position.y = wp.basePos.y + Math.sin(t * 1.2) * mp.yOsc;
-    }
-    // update box
-    wp.box.setFromObject(p);
-
-    // If player stands on a moving platform, try to move with it (very simple)
-    if (player.userData.onGround){
-      // check if player bottom is touching a platform's top (allow small epsilon)
-      const playerBottom = player.position.y - (player.userData.size/2);
-      const topY = wp.box.max.y;
-      const overlapX = player.position.x > wp.box.min.x - 0.01 && player.position.x < wp.box.max.x + 0.01;
-      const overlapZ = player.position.z > wp.box.min.z - 0.01 && player.position.z < wp.box.max.z + 0.01;
-      if (Math.abs(playerBottom - topY) < 0.12 && overlapX && overlapZ){
-        // push player along with platform motion this frame (based on delta of platform from base)
-        const targetPos = wp.mesh.position;
-        // compute platform velocity approx
-        const dx = (targetPos.x - wp.basePos.x) - (Math.sin((performance.now()*0.001 - dt) * (mp.speed||1)) * (mp.range||4));
-        // simple: nudge player's horizontal position slightly toward platform motion
-        // (This is a crude coupling — fine for a playground)
-        player.position.x += (wp.mesh.position.x - wp.basePos.x) - (Math.sin((performance.now()*0.001 - dt) * (mp.speed||1)) * (mp.range||4));
-        player.position.z += (wp.mesh.position.z - wp.basePos.z) - (Math.sin((performance.now()*0.001 - dt) * (mp.speed||1)) * (mp.range||4));
-      }
-    }
-  }
-}
-
-/* ============================
-   Camera follow/orbit
-   ============================ */
-let camVel = new THREE.Vector3();
-
-function updateCamera(dt){
-  // target position around player using yaw/pitch and distance
-  const desiredDistance = targetDistance;
-  // smooth distance
-  camera.userData = camera.userData || {dist: desiredDistance};
-  camera.userData.dist += (desiredDistance - camera.userData.dist) * Math.min(1, 6 * dt);
-
-  const x = Math.cos(pitch) * Math.sin(yaw);
-  const y = Math.sin(pitch);
-  const z = Math.cos(pitch) * Math.cos(yaw);
-  const dir = new THREE.Vector3(x,y,z).normalize();
-  const camTarget = player.position.clone().add(new THREE.Vector3(0, 0.6, 0));
-
-  const desiredCamPos = camTarget.clone().add(dir.multiplyScalar(camera.userData.dist));
-  // smooth camera
-  const smooth = Math.min(1, 10 * dt);
-  camera.position.lerp(desiredCamPos, smooth);
-  camera.lookAt(camTarget);
-
-  // optionally slightly tilt camera downward for better view when high
-  const maxTilt = 0.15;
-  camera.position.y += Math.max(0, player.position.y - 2) * 0.12;
-}
-
-/* ============================
-   Debug toggles
-   ============================ */
-function toggleDebug(on){
-  debugMode = on;
-  // show BoxHelpers for world boxes and player
-  // Clear previous helpers
-  for (const h of debugHelpers) h.visible = on;
-  // create/enable a player helper
-  if (on){
-    if (!player._boxHelper){
-      const bh = new THREE.BoxHelper(player, 0xffff00);
-      player._boxHelper = bh;
-      scene.add(bh);
-    }
-    player._boxHelper.visible = true;
-  } else {
-    if (player._boxHelper) player._boxHelper.visible = false;
-  }
-}
-
-/* ============================
-   Utility: update worldBoxes' boxes when meshes move/scale
-   ============================ */
-function refreshWorldBoxes(){
-  for (const w of worldBoxes) w.box.setFromObject(w.mesh);
-}
-
-// small initial hint fade-out
-setTimeout(()=>{ document.getElementById('overlayHint').style.opacity = '0.0'; }, 3500);
-setTimeout(()=>{ document.getElementById('overlayHint').style.display='none'; }, 5200);
-
+});
 </script>
 </body>
 </html>
