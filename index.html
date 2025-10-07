@@ -1,132 +1,165 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Fake 3D Platformer (CSS 3D Illusion)</title>
-<style>
-html,body {
-  height:100%;
-  margin:0;
-  background:#0e1016;
-  overflow:hidden;
-}
-#scene {
-  width:100%;
-  height:100%;
-  perspective: 1000px;
-  perspective-origin: 50% 50%;
-  overflow:hidden;
-}
-.world {
-  width:0; height:0;
-  transform-style: preserve-3d;
-  transform: rotateX(15deg) rotateY(0deg) translateZ(0);
-}
-.cube {
-  position:absolute;
-  width:100px; height:100px;
-  transform-style: preserve-3d;
-}
-.face {
-  position:absolute;
-  width:100%; height:100%;
-  background:rgba(0,128,255,0.9);
-  border:1px solid rgba(0,0,0,0.3);
-}
-.face.front  { transform: translateZ(50px); background:#2196f3; }
-.face.back   { transform: rotateY(180deg) translateZ(50px); background:#1976d2; }
-.face.right  { transform: rotateY(90deg) translateZ(50px); background:#42a5f5; }
-.face.left   { transform: rotateY(-90deg) translateZ(50px); background:#64b5f6; }
-.face.top    { transform: rotateX(90deg) translateZ(50px); background:#90caf9; }
-.face.bottom { transform: rotateX(-90deg) translateZ(50px); background:#1565c0; }
-
-.ground {
-  position:absolute;
-  width:2000px; height:2000px;
-  background:repeating-linear-gradient(0deg, #1c2230 0px, #1c2230 50px, #141924 50px, #141924 100px),
-              repeating-linear-gradient(90deg, #1c2230 0px, #1c2230 50px, #141924 50px, #141924 100px);
-  transform: rotateX(90deg) translateY(50px);
-  transform-origin: top;
-}
-
-.platform {
-  position:absolute;
-  width:100px; height:100px;
-  background:#ff7043;
-  transform-style:preserve-3d;
-}
-</style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>3D Platformer Playground</title>
+  <style>
+    body { margin: 0; overflow: hidden; background: #202020; }
+    canvas { display: block; }
+  </style>
 </head>
 <body>
-<div id="scene">
-  <div class="world" id="world">
-    <div class="ground"></div>
-    <!-- player -->
-    <div class="cube" id="player" style="transform:translate3d(0px,0px,0px)">
-      <div class="face front"></div>
-      <div class="face back"></div>
-      <div class="face left"></div>
-      <div class="face right"></div>
-      <div class="face top"></div>
-      <div class="face bottom"></div>
-    </div>
-    <!-- a few platforms -->
-    <div class="platform" style="transform:translate3d(300px,-50px,-400px)"></div>
-    <div class="platform" style="transform:translate3d(-200px,-100px,-700px)"></div>
-    <div class="platform" style="transform:translate3d(200px,-150px,-1000px)"></div>
-    <div class="platform" style="transform:translate3d(0px,-200px,-1300px)"></div>
-  </div>
-</div>
-<script>
-const world = document.getElementById("world");
-const player = document.getElementById("player");
+  <script src="https://cdn.jsdelivr.net/npm/three@0.157.0/build/three.min.js"></script>
 
-let pos = {x:0, y:0, z:0, vy:0};
-let yaw = 0, pitch = 15;
-let keys = {};
-let dragging = false, lastMouse = {x:0,y:0};
+  <script>
+    // --- Basic Setup ---
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x202020);
 
-document.addEventListener("keydown", e => keys[e.code]=true);
-document.addEventListener("keyup", e => keys[e.code]=false);
+    const camera = new THREE.PerspectiveCamera(75, innerWidth / innerHeight, 0.1, 1000);
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(innerWidth, innerHeight);
+    document.body.appendChild(renderer.domElement);
 
-document.addEventListener("mousedown", e => {
-  dragging = true;
-  lastMouse.x = e.clientX;
-  lastMouse.y = e.clientY;
-});
-document.addEventListener("mouseup", ()=>dragging=false);
-document.addEventListener("mousemove", e=>{
-  if(!dragging)return;
-  const dx = e.clientX - lastMouse.x;
-  yaw += dx * 0.3;
-  lastMouse.x = e.clientX;
-});
+    // Lighting
+    const light = new THREE.DirectionalLight(0xffffff, 1);
+    light.position.set(5, 10, 5);
+    scene.add(light);
+    scene.add(new THREE.AmbientLight(0x404040));
 
-function loop(){
-  requestAnimationFrame(loop);
+    // --- Ground Grid ---
+    const grid = new THREE.GridHelper(100, 50);
+    scene.add(grid);
 
-  // Movement
-  const speed = 5;
-  const rad = yaw * Math.PI/180;
-  if(keys["KeyW"]) { pos.x -= Math.sin(rad)*speed; pos.z -= Math.cos(rad)*speed; }
-  if(keys["KeyS"]) { pos.x += Math.sin(rad)*speed; pos.z += Math.cos(rad)*speed; }
-  if(keys["KeyA"]) { pos.x -= Math.cos(rad)*speed; pos.z += Math.sin(rad)*speed; }
-  if(keys["KeyD"]) { pos.x += Math.cos(rad)*speed; pos.z -= Math.sin(rad)*speed; }
+    // --- Player Cube ---
+    const playerGeometry = new THREE.BoxGeometry(1, 1, 1);
+    const playerMaterial = new THREE.MeshStandardMaterial({ color: 0x00ff88 });
+    const player = new THREE.Mesh(playerGeometry, playerMaterial);
+    player.position.set(0, 0.5, 0);
+    scene.add(player);
 
-  // Jump physics
-  pos.vy -= 0.6; // gravity
-  pos.y += pos.vy;
-  if(pos.y > 0){ pos.y = 0; pos.vy = 0; } // hit ground
-  if(keys["Space"] && pos.y==0) pos.vy = 10;
+    // --- Platforms ---
+    const platformMaterial = new THREE.MeshStandardMaterial({ color: 0x8888ff });
+    const platforms = [];
 
-  // Update player transform
-  player.style.transform = `translate3d(${pos.x}px,${-pos.y}px,${pos.z}px)`;
+    function addPlatform(x, y, z, width, depth) {
+      const geometry = new THREE.BoxGeometry(width, 0.5, depth);
+      const mesh = new THREE.Mesh(geometry, platformMaterial);
+      mesh.position.set(x, y, z);
+      scene.add(mesh);
+      platforms.push(mesh);
+    }
 
-  // Move world for camera illusion
-  world.style.transform = `rotateX(${pitch}deg) rotateY(${yaw}deg) translate3d(${-pos.x}px,${pos.y}px,${-pos.z-400}px)`;
-}
-loop();
-</script>
+    addPlatform(0, 0, 0, 20, 20);
+    addPlatform(4, 2, -5, 3, 3);
+    addPlatform(-4, 4, -5, 3, 3);
+    addPlatform(8, 6, -8, 3, 3);
+    addPlatform(0, 8, -12, 3, 3);
+
+    // --- Controls ---
+    let velocity = new THREE.Vector3();
+    let direction = new THREE.Vector3();
+    const keys = {};
+    let canJump = false;
+    let mouseDown = false;
+    let pitch = 0;
+    let yaw = 0;
+
+    window.addEventListener("keydown", (e) => keys[e.code] = true);
+    window.addEventListener("keyup", (e) => keys[e.code] = false);
+    window.addEventListener("mousedown", () => { mouseDown = true; });
+    window.addEventListener("mouseup", () => { mouseDown = false; });
+    window.addEventListener("mousemove", (e) => {
+      if (!mouseDown) return;
+      yaw -= e.movementX * 0.002;
+      pitch -= e.movementY * 0.002;
+      pitch = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, pitch)); // clamp look up/down
+    });
+
+    // --- Physics Loop ---
+    const gravity = -0.01;
+
+    function animate() {
+      requestAnimationFrame(animate);
+
+      // WASD movement direction relative to camera
+      direction.set(0, 0, 0);
+      const forward = new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw));
+      const right = new THREE.Vector3(forward.z, 0, -forward.x);
+
+      if (keys["KeyW"]) direction.add(forward);
+      if (keys["KeyS"]) direction.sub(forward);
+      if (keys["KeyA"]) direction.sub(right);
+      if (keys["KeyD"]) direction.add(right);
+      direction.normalize();
+
+      // Horizontal movement
+      velocity.x = direction.x * 0.15;
+      velocity.z = direction.z * 0.15;
+
+      // Jump
+      if (keys["Space"] && canJump) {
+        velocity.y = 0.25;
+        canJump = false;
+      }
+
+      // Gravity
+      velocity.y += gravity;
+
+      // Move player
+      player.position.add(velocity);
+
+      // Ground/platform collision detection
+      canJump = false;
+      let grounded = false;
+      for (const plat of platforms) {
+        const px = player.position.x;
+        const py = player.position.y;
+        const pz = player.position.z;
+
+        const minX = plat.position.x - plat.geometry.parameters.width / 2;
+        const maxX = plat.position.x + plat.geometry.parameters.width / 2;
+        const minZ = plat.position.z - plat.geometry.parameters.depth / 2;
+        const maxZ = plat.position.z + plat.geometry.parameters.depth / 2;
+        const topY = plat.position.y + 0.25;
+
+        if (px > minX && px < maxX && pz > minZ && pz < maxZ && py <= topY + 0.5 && py >= topY - 0.2) {
+          player.position.y = topY + 0.5;
+          velocity.y = 0;
+          grounded = true;
+          canJump = true;
+        }
+      }
+
+      // If below world, reset
+      if (player.position.y < -10) {
+        player.position.set(0, 5, 0);
+        velocity.set(0, 0, 0);
+      }
+
+      // Camera follow + look direction
+      const cameraOffset = new THREE.Vector3(0, 2, 5);
+      const camDir = new THREE.Vector3(
+        Math.sin(yaw) * Math.cos(pitch),
+        Math.sin(pitch),
+        Math.cos(yaw) * Math.cos(pitch)
+      );
+
+      camera.position.copy(player.position).addScaledVector(camDir, -5).add(new THREE.Vector3(0, 2, 0));
+      camera.lookAt(player.position);
+
+      renderer.render(scene, camera);
+    }
+
+    animate();
+
+    // Resize
+    window.addEventListener("resize", () => {
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight);
+    });
+  </script>
 </body>
 </html>
