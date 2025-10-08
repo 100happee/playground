@@ -1,0 +1,507 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>3D Platformer — Multiplayer (RTDB) + Chat</title>
+<style>
+  :root{--ui-bg: rgba(8,12,20,0.6);--ui-accent:#60c2ff}
+  html,body{height:100%;margin:0;background:#202020;color:#e6f6ff;font-family:Inter,system-ui,Segoe UI,Roboto,Helvetica,Arial}
+  #app{width:100%;height:100%;position:relative;overflow:hidden}
+  canvas{display:block;width:100%;height:100%}
+  .gridOverlay{position:absolute;inset:0;pointer-events:none;mix-blend-mode:overlay;opacity:0.55;z-index:5;
+    background-image:
+      linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px);
+    background-size: 40px 40px, 40px 40px;}
+  .panel{position:absolute;left:12px;top:12px;width:320px;max-width:40vw;background:var(--ui-bg);padding:12px;border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,0.6);border:1px solid rgba(255,255,255,0.04);backdrop-filter: blur(6px);z-index:30}
+  .panel h3{margin:0 0 8px 0;font-size:16px;display:flex;gap:8px;align-items:center}
+  .row{display:flex;gap:8px;align-items:center;margin-bottom:8px}
+  label{font-size:13px;color:#cde9ff;min-width:72px}
+  input[type="text"], input[type="color"]{flex:1;padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.06);background:transparent;color:inherit}
+  button{padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.06);background:linear-gradient(180deg,rgba(255,255,255,0.03),rgba(255,255,255,0.01));color:inherit;cursor:pointer}
+  #chatPanel{position:absolute;right:12px;top:12px;width:320px;max-width:40vw;height:60vh;background:var(--ui-bg);padding:10px;border-radius:12px;overflow:hidden;z-index:30;border:1px solid rgba(255,255,255,0.04);backdrop-filter: blur(6px)}
+  #messages{height:calc(100% - 64px);overflow:auto;padding:6px;box-sizing:border-box;font-size:13px}
+  #chatControls{display:flex;gap:8px;position:absolute;bottom:8px;left:8px;right:8px}
+  #msgInput{flex:1;padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.06);background:transparent;color:inherit}
+  .speech{position:absolute;pointer-events:none;transform-origin:center bottom;z-index:25;filter:drop-shadow(0 4px 8px rgba(0,0,0,0.6))}
+  .bubble{background:rgba(255,255,255,0.95);color:#071028;padding:6px 8px;border-radius:8px;font-weight:700;white-space:nowrap;transform:translateY(-6px)}
+  .bubble:after{content:'';position:absolute;left:50%;transform:translateX(-50%);bottom:-6px;width:0;height:0;border-left:6px solid transparent;border-right:6px solid transparent;border-top:6px solid rgba(255,255,255,0.95)}
+  .nametag{position:absolute;pointer-events:none;background:rgba(0,0,0,0.6);padding:4px 6px;border-radius:6px;color:#fff;font-weight:600;font-size:13px;transform-origin:center bottom;z-index:20}
+  #score{position:absolute;left:12px;bottom:16px;padding:8px 12px;background:var(--ui-bg);border-radius:10px;border:1px solid rgba(255,255,255,0.04);z-index:30}
+  .mini{font-size:12px;color:#bfe8ff;opacity:0.95}
+  #menuToggle{position:absolute;left:12px;top:calc(12px + 200px);z-index:40}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="grid" class="gridOverlay"></div>
+
+  <div class="panel" id="settingsPanel" aria-hidden="false">
+    <h3>
+      <span>Settings</span>
+      <button id="closeMenu" style="margin-left:auto">Close</button>
+    </h3>
+    <div class="row"><label>Name</label><input id="nameInput" type="text" placeholder="Your name" /></div>
+    <div class="row"><label>Color</label><input id="colorInput" type="color" value="#00ffaa" /></div>
+    <div class="row"><label></label><button id="applyBtn">Apply</button><button id="resetBtn">Reset</button></div>
+    <div class="row mini"><label>Controls</label><div class="mini">WASD move · Space jump · Drag to rotate</div></div>
+  </div>
+
+  <button id="menuToggle" title="Open menu">Menu</button>
+
+  <div id="chatPanel">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+      <strong>Chat</strong><div style="flex:1"></div><small class="mini">RTDB</small>
+    </div>
+    <div id="messages"></div>
+    <div id="chatControls">
+      <input id="msgInput" placeholder="Say something..." />
+      <button id="sendBtn">Send</button>
+    </div>
+  </div>
+
+  <div id="score" class="mini">Coins: <span id="coinCount">0</span></div>
+</div>
+
+<!-- Three.js (non-module global) -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.157.0/build/three.min.js"></script>
+
+<!-- Original game code (keeps behavior exactly as in your working file) -->
+<script>
+/* ---------- Game (physics, platforms, coins, camera) ---------- */
+/* This section is intentionally close to your "index (1).html" code with minor hooks for multiplayer */
+const appEl = document.getElementById('app');
+const coinCountEl = document.getElementById('coinCount');
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x202020);
+
+const camera = new THREE.PerspectiveCamera(75, innerWidth / innerHeight, 0.1, 1000);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+document.getElementById('app').appendChild(renderer.domElement);
+
+const light = new THREE.DirectionalLight(0xffffff, 1);
+light.position.set(5, 10, 5);
+scene.add(light);
+scene.add(new THREE.AmbientLight(0x606060));
+
+// Floor
+const floorMat = new THREE.MeshStandardMaterial({ color: 0x444444 });
+const floorGeo = new THREE.BoxGeometry(40, 0.5, 40);
+const floor = new THREE.Mesh(floorGeo, floorMat);
+floor.position.y = -0.25;
+scene.add(floor);
+
+// Player
+const playerGeo = new THREE.BoxGeometry(1,1,1);
+let playerMat = new THREE.MeshStandardMaterial({ color: 0x00ffaa });
+const player = new THREE.Mesh(playerGeo, playerMat);
+player.position.set(0,1,0);
+scene.add(player);
+
+// Platforms
+const platformMat = new THREE.MeshStandardMaterial({ color: 0x8888ff });
+const platforms = [];
+
+function addPlatform(x,y,z,width,depth){
+  const geo = new THREE.BoxGeometry(width,0.5,depth);
+  const mesh = new THREE.Mesh(geo, platformMat);
+  mesh.position.set(x,y,z);
+  scene.add(mesh);
+  platforms.push(mesh);
+}
+
+// platform path (closely spaced)
+addPlatform(0,0,0,20,20);
+addPlatform(3,2,-4,3,3);
+addPlatform(6,4,-8,3,3);
+addPlatform(3,6,-12,3,3);
+addPlatform(0,8,-16,3,3);
+addPlatform(-3,10,-20,3,3);
+addPlatform(-6,12,-24,3,3);
+addPlatform(-3,14,-28,3,3);
+addPlatform(0,16,-32,3,3);
+
+// Coins
+const coinGeo = new THREE.TorusGeometry(0.3,0.1,8,16);
+const coinMat = new THREE.MeshStandardMaterial({ color: 0xffdd00, emissive: 0x553300 });
+const coins = [];
+
+function addCoin(x,y,z){
+  const coin = new THREE.Mesh(coinGeo, coinMat.clone());
+  coin.position.set(x,y,z);
+  scene.add(coin);
+  coins.push(coin);
+}
+platforms.slice(1).forEach(p => addCoin(p.position.x, p.position.y + 1.2, p.position.z));
+
+// Controls
+const keys = {};
+let velocity = new THREE.Vector3();
+let mouseDown=false;
+let yaw=0, pitch=0;
+
+window.addEventListener("keydown", e => keys[e.code] = true);
+window.addEventListener("keyup", e => keys[e.code] = false);
+window.addEventListener("mousedown", () => mouseDown = true);
+window.addEventListener("mouseup", () => mouseDown = false);
+window.addEventListener("mousemove", e => {
+  if(!mouseDown) return;
+  yaw -= e.movementX * 0.002;
+  pitch -= e.movementY * 0.002;
+  pitch = Math.max(-Math.PI/2, Math.min(Math.PI/2, pitch));
+});
+
+// Collision helper
+function boxIntersect(a,b){ const aBox = new THREE.Box3().setFromObject(a); const bBox = new THREE.Box3().setFromObject(b); return aBox.intersectsBox(bBox); }
+
+// Physics constants (same as earlier)
+const gravity = -0.01;
+
+// Core animate loop (keeps same physics & behavior)
+function animateGame(){
+  requestAnimationFrame(animateGame);
+
+  // Movement direction (A/D fixed orientation)
+  const forward = new THREE.Vector3(Math.sin(yaw),0,Math.cos(yaw));
+  const right = new THREE.Vector3(forward.z,0,-forward.x);
+  const direction = new THREE.Vector3();
+  if(keys["KeyW"]) direction.add(forward);
+  if(keys["KeyS"]) direction.sub(forward);
+  if(keys["KeyA"]) direction.add(right);
+  if(keys["KeyD"]) direction.sub(right);
+  direction.normalize();
+
+  // Movement speed
+  velocity.x = direction.x * 0.15;
+  velocity.z = direction.z * 0.15;
+
+  // Jump
+  if(keys["Space"] && player.userData.canJump){ velocity.y = 0.25; player.userData.canJump = false; }
+
+  // Gravity
+  velocity.y += gravity;
+
+  // Apply velocity
+  player.position.add(velocity);
+
+  // Collisions (robust: handle sides and bottom)
+  player.userData.canJump = false;
+  for(const plat of [floor, ...platforms]){
+    const playerBox = new THREE.Box3().setFromObject(player);
+    const platBox = new THREE.Box3().setFromObject(plat);
+    if(playerBox.intersectsBox(platBox)){
+      const penetration = new THREE.Vector3();
+      penetration.x = Math.min(platBox.max.x - playerBox.min.x, playerBox.max.x - platBox.min.x);
+      penetration.y = Math.min(platBox.max.y - playerBox.min.y, playerBox.max.y - platBox.min.y);
+      penetration.z = Math.min(platBox.max.z - playerBox.min.z, playerBox.max.z - platBox.min.z);
+      const minPen = Math.min(penetration.x, penetration.y, penetration.z);
+      if(minPen === penetration.y){
+        if(player.position.y > plat.position.y){
+          player.position.y = platBox.max.y + 0.5;
+          velocity.y = 0;
+          player.userData.canJump = true;
+        } else {
+          player.position.y = platBox.min.y - 0.5;
+          velocity.y = Math.min(velocity.y, 0);
+        }
+      } else if(minPen === penetration.x){
+        if(player.position.x < plat.position.x) player.position.x = platBox.min.x - 0.5;
+        else player.position.x = platBox.max.x + 0.5;
+        velocity.x = 0;
+      } else {
+        if(player.position.z < plat.position.z) player.position.z = platBox.min.z - 0.5;
+        else player.position.z = platBox.max.z + 0.5;
+        velocity.z = 0;
+      }
+    }
+  }
+
+  // Respawn
+  if(player.position.y < -10){
+    player.position.set(0,3,0);
+    velocity.set(0,0,0);
+  }
+
+  // Coins
+  for(let i = coins.length-1;i>=0;i--){
+    const coin = coins[i];
+    coin.rotation.y += 0.05;
+    if(boxIntersect(player, coin)){
+      scene.remove(coin);
+      coins.splice(i,1);
+      // increment local count; UI and server sync will be handled by module
+      coinCountEl.textContent = parseInt(coinCountEl.textContent) + 1;
+    }
+  }
+
+  // Camera follow
+  const camDir = new THREE.Vector3(Math.sin(yaw)*Math.cos(pitch), Math.sin(pitch), Math.cos(yaw)*Math.cos(pitch));
+  camera.position.copy(player.position).addScaledVector(camDir, -5).add(new THREE.Vector3(0,2,0));
+  camera.lookAt(player.position);
+
+  renderer.render(scene, camera);
+}
+
+animateGame();
+
+window.addEventListener("resize", ()=>{ camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
+
+// mark game ready for module script to attach multiplayer features
+window.gameReady = true;
+window.player = player;
+window.playerGeo = playerGeo;
+window.scene = scene;
+window.camera = camera;
+window.renderer = renderer;
+window.platforms = platforms;
+window.coins = coins;
+</script>
+
+<!-- Module script: Firebase + multiplayer, interpolation, UI hookups -->
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/9.22.2/firebase-app.js";
+import { getDatabase, ref, set, onValue, push, onChildAdded, remove } from "https://www.gstatic.com/firebasejs/9.22.2/firebase-database.js";
+
+// --- Firebase config (your provided config) ---
+const firebaseConfig = {
+  apiKey: "AIzaSyBKrYvB_DSoFI155CJqTQZzzEsy6zoUFGM",
+  authDomain: "playground-61be7.firebaseapp.com",
+  databaseURL: "https://playground-61be7-default-rtdb.firebaseio.com",
+  projectId: "playground-61be7",
+  storageBucket: "playground-61be7.firebasestorage.app",
+  messagingSenderId: "906388783261",
+  appId: "1:906388783261:web:21fd0bfc2b9dade6359474"
+};
+const app = initializeApp(firebaseConfig);
+const db = getDatabase(app);
+
+// Wait until game is ready
+await new Promise(resolve => {
+  if(window.gameReady) return resolve();
+  const t = setInterval(()=>{ if(window.gameReady){ clearInterval(t); resolve(); } }, 50);
+});
+
+// DOM references & initial settings
+const nameInput = document.getElementById('nameInput');
+const colorInput = document.getElementById('colorInput');
+const applyBtn = document.getElementById('applyBtn');
+const resetBtn = document.getElementById('resetBtn');
+const messagesEl = document.getElementById('messages');
+const msgInput = document.getElementById('msgInput');
+const sendBtn = document.getElementById('sendBtn');
+const settingsPanel = document.getElementById('settingsPanel');
+const menuToggle = document.getElementById('menuToggle');
+const closeMenu = document.getElementById('closeMenu');
+const coinCountEl = document.getElementById('coinCount');
+
+menuToggle.addEventListener('click', ()=>{ settingsPanel.style.display = 'block'; menuToggle.style.display='none'; });
+closeMenu.addEventListener('click', ()=>{ settingsPanel.style.display = 'none'; menuToggle.style.display='block'; });
+
+// client id
+let clientId = localStorage.getItem('clientId');
+if(!clientId){ clientId = 'p_' + Math.random().toString(36).slice(2,9); localStorage.setItem('clientId', clientId); }
+
+// load saved settings
+nameInput.value = localStorage.getItem('playerName') || ('Player_' + clientId.slice(-4));
+colorInput.value = localStorage.getItem('playerColor') || '#00ffaa';
+let coinCount = 0; coinCountEl.textContent = coinCount;
+
+// helpers for cube materials (shaded sides)
+function makeCubeMaterial(hex){
+  const base = new THREE.Color(hex);
+  const darker = base.clone().multiplyScalar(0.82);
+  const lighter = base.clone().multiplyScalar(1.18);
+  // order: right, left, top, bottom, front, back
+  return [
+    new THREE.MeshStandardMaterial({color: darker}),
+    new THREE.MeshStandardMaterial({color: darker}),
+    new THREE.MeshStandardMaterial({color: lighter}),
+    new THREE.MeshStandardMaterial({color: base}),
+    new THREE.MeshStandardMaterial({color: base}),
+    new THREE.MeshStandardMaterial({color: base})
+  ];
+}
+
+// apply settings (local + write player)
+function applySettings(){
+  localStorage.setItem('playerName', nameInput.value || ('Player_' + clientId.slice(-4)));
+  localStorage.setItem('playerColor', colorInput.value);
+  // update local player color material
+  const mats = makeCubeMaterial(colorInput.value);
+  window.player.material = mats;
+  writePlayer(); // push to DB
+}
+applyBtn.addEventListener('click', applySettings);
+
+// reset
+resetBtn.addEventListener('click', ()=>{
+  localStorage.removeItem('playerName');
+  localStorage.removeItem('playerColor');
+  nameInput.value = 'Player_' + clientId.slice(-4);
+  colorInput.value = '#00ffaa';
+  applySettings();
+});
+
+// Chat send
+sendBtn.addEventListener('click', sendChat);
+msgInput.addEventListener('keydown', (e)=>{ if(e.key === 'Enter') sendChat(); });
+
+function sendChat(){
+  const txt = msgInput.value.trim(); if(!txt) return;
+  const m = { name: nameInput.value || ('Player_'+clientId.slice(-4)), text: txt, timestamp: Date.now(), clientId, color: colorInput.value };
+  const refMsg = push(ref(db, 'messages'));
+  set(refMsg, m);
+  msgInput.value = '';
+}
+
+// write player state
+function writePlayer(){
+  const p = { x: window.player.position.x, y: window.player.position.y, z: window.player.position.z, name: nameInput.value||('Player_'+clientId.slice(-4)), color: colorInput.value, ts: Date.now() };
+  set(ref(db, 'players/' + clientId), p);
+}
+// remove on unload
+window.addEventListener('beforeunload', ()=>{ remove(ref(db, 'players/' + clientId)).catch(()=>{}); });
+
+// ensure our player has shaded material from start
+window.player.material = makeCubeMaterial(colorInput.value);
+
+// others map
+const others = {}; // id -> {mesh, nameEl, speechEl, targetPos}
+
+// listen for players list
+onValue(ref(db, 'players'), (snap)=>{
+  const data = snap.val() || {};
+  // create/update others
+  for(const id in data){
+    if(id === clientId) continue;
+    const d = data[id];
+    if(!others[id]){
+      // create mesh
+      const mats = makeCubeMaterial(d.color || '#ffaa00');
+      const mesh = new THREE.Mesh(window.playerGeo, mats);
+      mesh.position.set(d.x||0, d.y||0, d.z||0);
+      window.scene.add(mesh);
+      // nametag DOM
+      const nameEl = document.createElement('div'); nameEl.className = 'nametag'; nameEl.textContent = d.name || 'Anon';
+      document.getElementById('app').appendChild(nameEl);
+      // speech bubble
+      const speechWrap = document.createElement('div'); speechWrap.className = 'speech'; speechWrap.style.display='none';
+      const bubble = document.createElement('div'); bubble.className='bubble'; speechWrap.appendChild(bubble);
+      document.getElementById('app').appendChild(speechWrap);
+      others[id] = { mesh, nameEl, speechWrap, targetPos: mesh.position.clone(), lastUpdate: performance.now() };
+    } else {
+      // update name/color immediately
+      others[id].nameEl.textContent = d.name || others[id].nameEl.textContent;
+      const mats = makeCubeMaterial(d.color || '#ffaa00');
+      others[id].mesh.material = mats;
+      // set new target for interpolation
+      others[id].targetPos.set(d.x||0, d.y||0, d.z||0);
+      others[id].lastUpdate = performance.now();
+    }
+  }
+  // remove missing
+  for(const id in others){
+    if(!(id in data)){
+      const o = others[id];
+      window.scene.remove(o.mesh);
+      o.nameEl.remove();
+      o.speechWrap.remove();
+      delete others[id];
+    }
+  }
+});
+
+// listen for chat messages (append to messages and create speech over sender)
+onChildAdded(ref(db,'messages'), (snap)=>{
+  const msg = snap.val();
+  if(!msg) return;
+  const time = new Date(msg.timestamp).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+  const div = document.createElement('div');
+  div.style.padding='6px 8px'; div.style.marginBottom='6px'; div.style.borderRadius='6px'; div.style.background='rgba(255,255,255,0.02)';
+  div.innerHTML = `<strong style="color:${msg.color||'#fff'}">${escapeHtml(msg.name)}</strong> <span style="opacity:0.8">[${time}]</span>: ${escapeHtml(msg.text)}`;
+  messages.appendChild(div);
+  messages.scrollTop = messages.scrollHeight;
+
+  // show bubble above sender (others or self)
+  if(msg.clientId && msg.clientId !== clientId && others[msg.clientId]){
+    const o = others[msg.clientId];
+    const bubble = o.speechWrap.querySelector('.bubble');
+    bubble.textContent = msg.text;
+    o.speechWrap.style.display = 'block';
+    o.speechWrap._hideAt = Date.now() + 3800;
+  } else if(msg.clientId === clientId){
+    // create temporary bubble over self
+    const wrap = document.createElement('div'); wrap.className = 'speech'; const b = document.createElement('div'); b.className='bubble'; b.textContent = msg.text; wrap.appendChild(b);
+    document.getElementById('app').appendChild(wrap);
+    setTimeout(()=>wrap.remove(),4200);
+  }
+});
+
+// keep a local flattened list of messages (initial load)
+const messages = document.getElementById('messages');
+
+// utility: sanitize
+function escapeHtml(s){ return String(s).replace(/[&<"']/g, m=>({'&':'&amp;','<':'&lt;','"':'&quot;',"'":'&#039;'}[m])); }
+
+// interpolation loop runs inside game render update: hook into animationFrame by wrapping scene render with small updater
+(function attachMultiplayerLoop(){
+  const lerpFactor = 0.12; // smoothing for interpolation
+  function mpUpdate(){
+    // interpolate others toward their target positions
+    for(const id in others){
+      const o = others[id];
+      o.mesh.position.lerp(o.targetPos, lerpFactor);
+      // nametag & speech bubble screen positions updated each frame in same place as camera update below
+    }
+    // update speech bubble hide timers
+    for(const id in others){
+      const o = others[id];
+      if(o.speechWrap._hideAt && Date.now() > o.speechWrap._hideAt){ o.speechWrap.style.display='none'; delete o.speechWrap._hideAt; }
+    }
+    // schedule next
+    requestAnimationFrame(mpUpdate);
+  }
+  mpUpdate();
+})();
+
+// write our player at a regular interval (throttle)
+setInterval(()=> writePlayer(), 120);
+
+// update nametag and speech bubble screen positions inside a camera-driven loop
+(function updateOverlays(){
+  function loop(){
+    requestAnimationFrame(loop);
+    // others
+    for(const id in others){
+      const o = others[id];
+      const screen = toScreenPosition(o.mesh.position.clone().add(new THREE.Vector3(0,1.25,0)), window.camera, window.renderer);
+      o.nameEl.style.left = (screen.x - o.nameEl.offsetWidth/2) + 'px';
+      o.nameEl.style.top = (screen.y - 28) + 'px';
+      // bubble
+      o.speechWrap.style.left = (screen.x - (o.speechWrap.offsetWidth||60)/2) + 'px';
+      o.speechWrap.style.top = (screen.y - 48) + 'px';
+    }
+  }
+  loop();
+})();
+
+// helper map 3D pos to screen coords
+function toScreenPosition(pos, camera, renderer){
+  const widthHalf = 0.5 * renderer.domElement.clientWidth;
+  const heightHalf = 0.5 * renderer.domElement.clientHeight;
+  pos.project(camera);
+  return { x: (pos.x * widthHalf) + widthHalf, y: -(pos.y * heightHalf) + heightHalf };
+}
+
+// expose makeCubeMaterial for debugging (optional)
+// window.makeCubeMaterial = makeCubeMaterial; // not required
+
+// cleanup if unload
+window.addEventListener('beforeunload', ()=>{ remove(ref(db, 'players/' + clientId)).catch(()=>{}); });
+
+</script>
+</body>
+</html>
